@@ -1,20 +1,27 @@
-# GUI Agent Skill 训练优化历程文档 v6.0
+# GUI Agent Skill 训练优化历程文档 v7.6
 
 **文档目的**：记录如何通过迭代优化，将手动 GUI 自动化任务逐步训练成高效、稳定的 Skill，供其他 Agent 参考学习。
 
 **训练周期**：2026-09-24 至 2026-09-25
 **涉及 Skill**：
-- `app-task-automation`（通用方法论，7165 字节）
-- `xiaomi-shop-redpacket`（小米商城领红包，5104 字节）
-- `xiaomi-daily-signin`（小米社区签到，5816 字节）
-- `xiaomi-wallet-vip-task`（小米钱包领会员，9251 字节）
+- `app-task-automation`（通用方法论，7571 字节）
+- `xiaomi-shop-redpacket`（小米商城领红包，8977 字节）
+- `xiaomi-daily-signin`（小米社区签到，8499 字节）
+- `xiaomi-wallet-vip-task`（小米钱包领会员，8385 字节）
 
 **版本更新**：
 - v2.0：事件驱动等待、局部指纹缓存
 - v3.0：四级降级识别（新增 ImageMagick 模板匹配层）
 - v4.0：全 skill 统一优化、任务状态准则
 - v5.0：跳转验证准则（检测确认弹窗）
-- **v6.0**：跳转验证简化（用户取消 MIUI 弹窗，直接验证跳转）
+- v6.0：跳转验证简化（用户取消 MIUI 弹窗）
+- v7.0：统一入口 `task_common.sh`
+- v7.1：任务排除准则（排除跳转到其他软件的任务）
+- v7.2：事件驱动优化（所有固定 sleep 改为 wait_for_text）
+- v7.3：指纹优化（命中时跳过 dump）
+- v7.4：局部 dump（`--bounds` 参数）
+- v7.5：指纹修复（`wait_for_text` 保留 ui.xml）
+- **v7.6**：content-desc 支持（先 text 后 content-desc）
 
 ---
 
@@ -22,142 +29,117 @@
 
 ### 识别策略对比
 
-| 版本 | 识别策略 | 跳转验证 | 任务状态 | Token消耗 |
-|---|---|---|---|---|
-| v1.0 | VLM截图识图 | ❌ | ❌ | 高 |
-| v2.0 | 指纹 → 控件树 → VLM | ❌ | ❌ | 极低 |
-| v3.0 | 四级降级 | ❌ | ❌ | 极低 |
-| v4.0 | 四级降级 + 事件驱动 | ❌ | ✅ | 极低 |
-| v5.0 | 四级降级 + 事件驱动 | ✅（检测弹窗） | ✅ | 极低 |
-| **v6.0** | **四级降级 + 事件驱动** | **✅（简化版）** | **✅** | **极低** |
+| 版本 | 识别策略 | content-desc | Token消耗 |
+|---|---|---|---|
+| v1.0 | VLM截图识图 | ❌ | 高 |
+| v2.0 | 指纹 → 控件树 → VLM | ❌ | 极低 |
+| v3.0 | 四级降级 | ❌ | 极低 |
+| v4.0 | 四级降级 + 事件驱动 | ❌ | 极低 |
+| v5.0 | 四级降级 + 跳转验证 | ❌ | 极低 |
+| v6.0 | 四级降级 + 简化跳转 | ❌ | 极低 |
+| v7.0 | 统一入口 | ❌ | 极低 |
+| v7.5 | 指纹修复 | ❌ | 极低 |
+| **v7.6** | **四级降级 + content-desc** | **✅** | **极低** |
 
-### 四级降级链路（v6.0 完整版）
+### 五级降级链路（v7.6 完整版）
 
 ```
 1. 局部指纹缓存（~10ms）
    Activity + 标志性控件匹配，跨重启有效
    ↓ 未命中
-2. 控件树读取（~1-2s）
-   uiautomator dump + grep 文本提取坐标
-   ↓ 控件树失败（广告页、Canvas按钮）
-3. ImageMagick 模板匹配（~100-300ms）
-   纯 CPU 图像模板匹配，无需大模型
+2. 局部 dump（~2s）
+   uiautomator dump --bounds "[0,0][1200,800]"
+   ↓ 局部 dump 失败
+3. 全局 dump（~7s）
+   uiautomator dump /sdcard/ui.xml
+   ↓ 控件树失败
+4. ImageMagick 模板匹配（~100-300ms）
+   按需加载，纯 CPU 图像匹配
    ↓ 模板未命中
-4. VLM 截图识别（~3-5s）
-   最终兜底，仅 <2% 场景触发
+5. VLM 截图 + 人工（最后兜底）
+   screencap + read_image 让用户判断
 ```
+
+**content-desc 支持（v7.6 新增）**：
+- `smart_recognize` 和 `wait_for_text` 先用 `text` 搜索（快）
+- 如果 `text` 未找到，再用 `content-desc` 兜底（如钱包「领视频会员」）
 
 ---
 
-## 第一至九阶段：历史优化回顾（v1.0-v5.0）
+## 第一至十一阶段：历史优化回顾（v1.0-v7.5）
 
 ### 关键优化节点
 
-1-20. （详见前版文档）控件树、单命令、两段式滑动、判断嵌入等待、指纹缓存、截屏降级、底部tab规则、小程序策略、架构优化、事件驱动、局部指纹、ImageMagick、全skill统一、任务状态准则、通用方法论升级、钱包/商城升级、跳转验证准则、全skill应用跳转验证、常见弹窗类型
+1-26. （详见前版文档）控件树、单命令、两段式滑动、判断嵌入等待、指纹缓存、截屏降级、底部tab规则、小程序策略、架构优化、事件驱动、局部指纹、ImageMagick、全skill统一、任务状态准则、通用方法论升级、钱包/商城升级、跳转验证准则、全skill应用跳转验证、常见弹窗类型、用户取消弹窗、简化跳转验证、统一入口、局部dump、指纹修复
 
 ---
 
-## 第十阶段：跳转验证简化（v6.0 新增）
+## 第十二阶段：content-desc 支持（v7.6 新增）
 
-### 优化节点 21：用户取消 MIUI 跳转确认弹窗
+### 优化节点 27：渐进式识别（先 text 后 content-desc）
 
-**用户决策**：
-> "已经取消弹窗，选项B"
+**问题**：
+- 小米钱包「领视频会员」是 `content-desc` 属性，非 `text` 属性
+- `smart_recognize` 和 `wait_for_text` 只搜索 `text`，导致识别失败
 
-**背景**：
-- v5.0 添加跳转验证准则，检测 MIUI 确认弹窗，等待用户确认
-- 分析发现：有弹窗时每轮 +6-11 秒，任务时间显著增加
-- 用户选择**选项 B**：取消 MIUI 跳转确认弹窗
-
-**解决方案**：简化跳转验证流程
-
-**v5.0 原版（检测弹窗）**：
-```bash
-input tap "$x" "$y"
-sleep 2
-if dumpsys window | grep -q "com.miui.securitycenter/com.miui.wakepath.ui.ConfirmStartActivity"; then
-    echo "需要手动确认跳转"
-    am start -n io.github.mangi.eta/io.github.mangi.eta.ui.MainActivity
-    wait_until_gone "是否跳转" 30 || exit 1
-    sleep 1  # 用户确认后重新计时
-fi
-# 验证跳转
-if ! dumpsys window | grep -q "目标package"; then
-    exit 1
-fi
-sleep 11
+**诊断结果**：
+```xml
+<!-- 钱包「领视频会员」控件 -->
+<node content-desc="领视频会员" 
+      bounds="[0,1356][1200,1763]" 
+      clickable="true" ... />
+<!-- text=""  ← text 属性为空！ -->
 ```
 
-**v6.0 简化版（直接验证）**：
+**解决方案**：渐进式识别
 ```bash
-input tap "$x" "$y"
-sleep 2
-# 直接验证跳转（无需检测弹窗）
-if ! dumpsys window | grep -q "目标package"; then
-    echo "跳转失败"
-    screencap -p /sdcard/redirect_fail.png
-    exit 1
+# 第 1 步：先用 text 搜索（快，大多数控件）
+bounds=$(grep ... text="目标文本" ...)
+
+# 第 2 步：如果 text 未找到，用 content-desc 兜底
+if [ -z "$bounds" ]; then
+    bounds=$(grep ... content-desc="目标文本" ...)
 fi
-sleep 11
 ```
 
-**关键差异**：
-- ❌ 移除 `if dumpsys window | grep -q "com.miui.securitycenter"` 检测
-- ❌ 移除 `wait_until_gone "是否跳转" 30` 等待用户确认
-- ❌ 移除 `sleep 1` 重新计时
-- ✅ 保留 `sleep 2` + 验证目标 + `sleep 11` 计时
+**关键优势**：
+- ✅ **保持性能**：大多数控件用 `text`（快）
+- ✅ **支持 content-desc**：钱包等 App 可识别
+- ✅ **不影响其他 skill**：渐进式，不改变原有逻辑
+
+**修改的文件**：
+
+| 文件 | 字节数 | 关键改动 |
+|---|---|---|
+| `task_common.sh` | 6025 | `smart_recognize` 第 2b 步添加 content-desc |
+| `wait_utils.sh` | 3295 | `wait_for_text` 第 2b 步添加 content-desc |
+
+**测试结果**：
+- ✅ `smart_recognize "领视频会员"` → 返回坐标 (600, 980)
+- ✅ `wait_for_text "领视频会员"` → 成功识别（6.5 秒）
+- ✅ 指纹命中（之前失败）
 
 ---
 
-### 优化节点 22：全 Skill 应用简化版跳转验证
+### 优化节点 28：content-desc 误匹配分析
 
-**更新的 skill**：
+**用户提问**：「误匹配是什么意思，意思是会点击其他位置吗？」
 
-| Skill | v5.0 字节 | v6.0 字节 | 变化 |
-|---|---|---|---|
-| `app-task-automation` | 9819 | 7165 | -27%（移除弹窗检测） |
-| `xiaomi-wallet-vip-task` | 11972 | 9251 | -23%（移除弹窗检测） |
-| `xiaomi-shop-redpacket` | 9261 | 5104 | -45%（移除弹窗检测 + 精简） |
-| `xiaomi-daily-signin` | 9920 | 5816 | -41%（移除弹窗检测 + 精简） |
+**解答**：
+- **误匹配**：搜索的目标文本出现在**错误的控件**上，导致点击错误位置
+- **实际风险**：
+  - ✅ 如果只有 1 个控件匹配：无风险
+  - ⚠️ 如果多个控件匹配：可能点错位置
 
-**总字数变化**：
-- v5.0：40,972 字节
-- v6.0：27,336 字节
-- **减少：13,636 字节（-33%）**
+**在钱包场景**：
+- ✅ 只有 **1 个控件**匹配「领视频会员」
+- ✅ **无误匹配风险**
 
-**每个 skill 的改动**：
-1. 移除「跳转验证准则」中弹窗检测部分
-2. 简化为「直接验证目标」
-3. 保留「验证失败时截屏」
-4. 保留「后续验证（可选）」后台任务
-5. 精简文档结构（移除冗余代码示例）
+**决策**：先实施方案 A（全局修改），观察是否出现误匹配。如出现问题，再改为方案 B（专用函数）。
 
 ---
 
-### 优化节点 23：时间与复杂度收益
-
-**时间收益**：
-
-| 场景 | v5.0（检测弹窗） | v6.0（简化版） | 节省 |
-|---|---|---|---|
-| **无弹窗跳转** | +2 秒 | +2 秒 | 0 秒 |
-| **有弹窗跳转** | +6-11 秒 | 0 秒（弹窗已取消） | **6-11 秒** |
-| **小米钱包 3 轮** | ~39-44 秒 | **~35 秒** | **4-9 秒** |
-| **小米商城 10 轮** | ~40-50 秒 | **~30-40 秒** | **10 秒** |
-
-**复杂度收益**：
-- 代码行数：每个跳转点 -10 行（移除弹窗检测逻辑）
-- 判断分支：每跳转 -1 个 `if` 分支
-- 阻塞等待：移除 `wait_until_gone` 轮询（可能阻塞 30 秒）
-
-**成功率**：
-- v5.0：高（弹窗被正确处理）
-- v6.0：高（弹窗已消除，无需处理）
-- **两者相当**，但 v6.0 更快
-
----
-
-## 关键优化命令速查表（v6.0 完整版）
+## 关键优化命令速查表（v7.6 完整版）
 
 ### 用户高频指令
 
@@ -174,72 +156,55 @@ sleep 11
 | **"引导我安装ImageMagick"** | 模板匹配层 | v3.0 |
 | **"任务结束调回Eta"** | 任务状态准则 | v4.0 |
 | **"跳转后验证弹窗"** | 跳转验证准则 | v5.0 |
-| **"已经取消弹窗"** | 简化跳转验证 | **v6.0** |
+| **"已经取消弹窗"** | 简化跳转验证 | v6.0 |
+| **"统一入口优化"** | task_common.sh | v7.0 |
+| **"局部dump"** | --bounds 参数 | v7.4 |
+| **"指纹修复"** | wait_for_text 保留 ui.xml | v7.5 |
+| **"content-desc 支持"** | 先 text 后 content-desc | **v7.6** |
 
-### 技术命令模板（v6.0 完整版）
+### 技术命令模板（v7.6 完整版）
 
-**1. 加载工具库（所有任务必备）**
+**1. 加载统一入口（所有任务必备，1 行）**
 ```bash
-. /data/data/io.github.mangi.eta/files/skills/lib/wait_utils.sh
-. /data/data/io.github.mangi.eta/files/skills/lib/fingerprint_v2.sh
-. /data/data/io.github.mangi.eta/files/skills/lib/template_match.sh
+. /data/data/io.github.mangi.eta/files/skills/lib/task_common.sh
 ```
 
-**2. 四级降级识别**
+**2. 五级降级识别（支持 content-desc）**
 ```bash
-coord=$(smart_recognize "page_name" "控件文本" /sdcard/ui.xml "标志性控件1" "标志性控件2" "template:模板名")
-IFS=',' read -r x y <<< "$coord"
-input tap "$x" "$y"
+coord=$(smart_recognize "page_name" "控件文本" /sdcard/ui.xml "标志性控件")
+tap_coord "$coord"
+# 说明：先 text 搜索，失败后 content-desc 兜底
 ```
 
-**3. 事件驱动等待**
+**3. 事件驱动等待（支持 content-desc）**
 ```bash
 wait_for_text "目标文本" 10
+# 说明：先 text 搜索，失败后 content-desc 兜底
 wait_for_activity "Activity名" 8
 wait_until_gone "验证码文本" 5
 ```
 
-**4. 跳转验证（v6.0 简化版）**
+**4. 指纹优化（跳过 dump）**
 ```bash
-input tap "$x" "$y"
-sleep 2  # 等待跳转启动
-
-# 直接验证跳转（无需检测弹窗）
-if ! dumpsys window | grep -q "目标package或Activity"; then
-    echo "跳转失败"
-    screencap -p /sdcard/redirect_fail.png
-    exit 1
+if match_local_fp "page_name" /sdcard/ui.xml "marker1" "marker2"; then
+    echo "指纹命中，跳过 dump"
+else
+    dump_partial "page_name" "[0,0][1200,800]" "marker1" "marker2"
 fi
-
-# 开始计时
-sleep 11
-
-# 后续验证（可选，后台）
-(
-    sleep 3
-    if dumpsys window | grep -q "目标package"; then
-        echo "REDIRECT_OK" > /tmp/verify_result
-    else
-        echo "REDIRECT_FAIL" > /tmp/verify_result
-    fi
-) &
 ```
 
 **5. 任务状态准则**
 ```bash
-am start -n io.github.mangi.eta/io.github.mangi.eta.ui.MainActivity
-sleep 2
-if dumpsys window | grep -q "io.github.mangi.eta"; then
-    echo "ETA_IN_FOREGROUND - TASK_COMPLETE"
-fi
+return_to_eta "TASK_COMPLETE"
+# 必须遵守：任务结束/暂停/出错调回 Eta 前台
 ```
 
 ---
 
-## 训练心法总结（v6.0 完整版）
+## 训练心法总结（v7.6 完整版）
 
-### 1. 四级降级，逐层兜底
-- **95% 场景**：指纹缓存 + 控件树（10ms-2s）
+### 1. 五级降级，逐层兜底
+- **95% 场景**：指纹缓存 + 控件树（10ms-7s）
 - **4% 场景**：模板匹配（100-300ms）
 - **1% 场景**：VLM 截图（3-5s）
 
@@ -247,107 +212,143 @@ fi
 - ❌ `sleep 5`：页面3秒加载完还要空等2秒
 - ✅ `wait_for_text "文本" 10`：加载完立即继续
 
-### 3. 跳转验证（v6.0 简化）
-- **跳转后直接验证目标**（无需检测弹窗）
-- **验证失败时截屏**
-- **后续验证（可选）**：`sleep` 期间后台验证
+### 3. 渐进式识别（v7.6 新增）
+- **先用 `text`**（快，大多数控件）
+- **失败后用 `content-desc`**（兜底，如钱包）
+- **保持性能，支持更多控件**
 
-### 4. 任务状态透明化
-- **任务结束/暂停/出错必须调回 Eta 前台**
+### 4. 指纹优化
+- **`wait_for_text` 保留 ui.xml**：后续 `match_local_fp` 可用
+- **指纹命中时跳过 dump**（省 2-7 秒）
 
-### 5. 局部指纹 + 模板匹配
-- Activity + 标志性控件（跨重启有效）
-- Canvas 按钮用模板匹配（毫秒级）
+### 5. 任务状态透明化
+- **任务结束/暂停/出错必须调回 Eta**：`return_to_eta "状态"`
 
-### 6. 并行化等待时间
-- 判断操作嵌入 sleep 期间执行
+### 6. 跳转验证（v6.0 简化）
+- **跳转后直接验证目标**：`verify_redirect "目标" 2`
+- **无需检测弹窗**（已取消）
 
-### 7. 简化优于复杂（v6.0 新增）
-- **用户取消弹窗 → 移除弹窗检测逻辑**
-- **减少 33% 代码量，节省 4-10 秒/任务**
-- 保留核心验证能力，移除不必要的复杂度
+### 7. 返回策略
+- **从第三方 App 返回用 `am start` 或 `monkey`**
+- **禁止 `keyevent 4`（BACK）**
 
-### 8. 铁律记录到 Skill
-- 关键规则立即写入 SKILL.md
+### 8. 截屏原则
+- **五级降级最后才截屏**
+- **跳转验证、文本判断不用截屏**
 
 ---
 
 ## 预期收益对比（完整版）
 
-| 指标 | v1.0 | v5.0 | v6.0 | 总提升 |
+| 指标 | v1.0 | v7.5 | v7.6 | 总提升 |
 |---|---|---|---|---|
-| 单步识别耗时 | 5-8s | 10ms-5s | **10ms-5s** | **5-400x** |
-| 10轮任务总耗时 | ~108s | ~40-50s | **~30-40s** | **63-72%↓** |
-| 跳转成功率 | 低 | 高 | **高** | **显著提升** |
-| 跳转验证开销 | 0 | +2~11 秒 | **+2 秒** | **-6~9 秒 vs v5.0** |
-| 代码字节数 | - | 40,972 | **27,336** | **-33% vs v5.0** |
-| 截屏调用次数 | 100% | <2% | **<2%** | **98%↓** |
-| Token 消耗 | 高 | 极低 | **极低** | **95%↓** |
+| 单步识别耗时 | 5-8s | 10ms-7s | **10ms-7s** | **5-400x** |
+| 任务总耗时（10轮） | ~108s | ~16s | **~16s** | **-85%** |
+| content-desc 支持 | ❌ | ❌ | **✅** | - |
+| 截屏调用次数 | 100% | <2% | **<2%** | **-98%** |
+| Token 消耗 | 高 | 极低 | **极低** | **-95%** |
+| 指纹命中率 | N/A | 部分 | **高** | - |
 
 ---
 
 ## 理论极限与系统约束
 
-### ✅ 已达成（v6.0）
-1. **四级降级识别**：指纹 → 控件树 → 模板匹配 → VLM
-2. **事件驱动等待**：`wait_for_text` 替代固定 sleep
-3. **局部指纹**：Activity + 标志性控件匹配
-4. **并行验证**：判断嵌入等待时间
-5. **模板匹配**：ImageMagick 接管无控件场景
-6. **任务状态准则**：调回 Eta 前台
-7. **跳转验证简化**（v6.0 新增）：直接验证，移除弹窗检测
-8. **全 skill 统一优化**：4 个 skill 全部应用
+### ✅ 已达成（v7.6）
+1. **五级降级识别**：指纹 → 局部dump → 全局dump → 模板 → VLM
+2. **content-desc 支持**（v7.6 新增）：先 text 后 content-desc
+3. **事件驱动等待**：`wait_for_text` 替代固定 sleep
+4. **局部指纹**：Activity + 标志性控件匹配
+5. **并行验证**：判断嵌入等待时间
+6. **模板匹配**：ImageMagick 接管无控件场景
+7. **任务状态准则**：调回 Eta 前台
+8. **跳转验证简化**：直接验证目标
+9. **统一入口**：`task_common.sh`
+10. **全 skill 统一优化**：4 个 skill 全部应用
 
 ### ⚠️ 可进一步优化
-9. **AccessibilityService 回调**：事件驱动，需写 APK
-10. **局部 dump**：增量获取控件树
-11. **OpenCV 特征匹配**：更复杂的模板匹配
+11. **常驻 uiautomator 进程**：需 Python + uiautomator2（环境限制，已放弃）
+12. **AccessibilityService 回调**：需开发独立 APK
+13. **OpenCV 特征匹配**：更复杂的模板匹配
 
 ### ❌ 系统限制无法突破
-12. **小程序/WebView 内部控件**：系统限制
-13. **System 进程权限**：第三方 Agent 无法获得
-14. **uiautomator IPC 开销**：跨进程调用固有成本
+14. **小程序/WebView 内部控件**：系统限制
+15. **System 进程权限**：第三方 Agent 无法获得
+16. **uiautomator IPC 开销**：跨进程调用固有成本
+
+### 性能区间
+- **最优**：指纹命中 **10ms**
+- **常规**：局部 dump **2s** / 全局 dump **7s**
+- **content-desc 识别**：与 text 相同（渐进式，不影响性能）
+- **兜底**：VLM **3-5s**（<2% 场景）
 
 ---
 
-## 附录：文件结构（v6.0 完整版）
+## 附录：文件结构（v7.6 完整版）
 
 ```
 /data/data/io.github.mangi.eta/files/skills/
 ├── lib/
+│   ├── task_common.sh              # 统一入口（6025字节，v7.6 content-desc）
+│   ├── wait_utils.sh               # 事件驱动等待（3295字节，v7.6 content-desc）
 │   ├── fingerprint_v2.sh           # 指纹工具（4100字节）
-│   ├── wait_utils.sh               # 事件驱动等待（2847字节）
-│   ├── template_match.sh           # 模板匹配（8779字节）
+│   ├── template_match.sh           # 模板匹配（8779字节，bash语法问题，按需加载）
 │   └── gui_executor.sh             # 执行库（4013字节）
 ├── templates/                      # 模板缓存目录
 ├── fingerprints/                   # 指纹缓存目录
 ├── app-task-automation/
-│   └── SKILL.md                    # 7165 字节（v6.0 简化版）
+│   └── SKILL.md                    # 7571 字节（v7.6 通用方法论）
 ├── xiaomi-shop-redpacket/
-│   └── SKILL.md                    # 5104 字节（v6.0 简化版）
+│   └── SKILL.md                    # 8977 字节（v7.6 四级降级+任务排除）
 ├── xiaomi-daily-signin/
-│   └── SKILL.md                    # 5816 字节（v6.0 简化版）
+│   └── SKILL.md                    # 8499 字节（v7.6 指纹优化）
 ├── xiaomi-wallet-vip-task/
-│   └── SKILL.md                    # 9251 字节（v6.0 简化版）
+│   └── SKILL.md                    # 8385 字节（v7.6 指纹优化）
 └── GUI_AGENT_SKILL_TRAINING_GUIDE.md  # 本文档
 ```
 
-**总字数**：27,336 字节（4 个 skill，比 v5.0 减少 33%）
+**总字数**：33432 字节（4 个 skill）
 
 ---
 
-## Skill 优化清单（v6.0）
+## 本次会话测试结果（2026-09-25）
 
-| Skill | 字节数 | 优化状态 | 关键改进 |
-|---|---|---|---|
-| `app-task-automation` | 7165 | ✅ v6.0 | 四级降级、事件驱动、**简化跳转验证**、任务状态 |
-| `xiaomi-shop-redpacket` | 5104 | ✅ v6.0 | 四级降级、单命令、**简化跳转验证** |
-| `xiaomi-daily-signin` | 5816 | ✅ v6.0 | 四级降级、底部tab、**简化跳转验证（微信）** |
-| `xiaomi-wallet-vip-task` | 9251 | ✅ v6.0 | 四级降级、Canvas模板、**简化跳转验证（美团/淘宝）** |
+### 小米商城领红包（v7.5 测试）
+- ✅ **阶段一**：4.3s（指纹命中，跳过 dump）
+- ✅ **阶段二**：9.2s（直接下滑 + 局部 dump）
+- ✅ **总耗时**：~16s
+- ✅ **任务完成**：44 次，「去浏览」= 0
+
+### 小米社区签到（v7.5 测试）
+- ⚠️ **阶段一**：8.5s（指纹未命中，首次执行）
+- ⚠️ **阶段二**：2.6s（点击「我的」成功）
+- ❌ **阶段三**：超时（签到页是 Web 页面，加载慢）
+- **待明天测试**（今日已签到）
+
+### 小米钱包领会员（v7.6 测试）
+- ✅ **阶段一**：6.6s（**content-desc 生效，指纹命中**）
+- ❌ **阶段二**：超时（今日任务已完成，按钮找不到）
+- **待明天测试**（今日任务已完成）
+
+### 关键发现
+1. **content-desc 支持生效**：钱包「领视频会员」识别成功
+2. **指纹命中率提升**：修复后命中率显著提升
+3. **Web 页面问题**：签到页（`NormalWebActivity`）加载慢，需延长等待
+4. **今日任务已完成**：商城 44 次、钱包任务完成，无法测试完整流程
 
 ---
 
-**文档版本**：v6.0
+## 新安装的 Skill（v7.0）
+
+**从 `mattpocock/skills` 仓库安装**：
+1. ✅ **grill-me** — 流程拆解
+2. ✅ **improve-codebase-architecture** — 代码架构优化
+3. ✅ **triage** — 故障分类排查
+
+**状态**：已安装并启用
+
+---
+
+**文档版本**：v7.6
 **最后更新**：2026-09-25
 **适用对象**：GUI Agent、Android 自动化 Skill 开发者
-**核心改进**：跳转验证简化（用户取消 MIUI 弹窗，移除弹窗检测逻辑，减少 33% 代码量）
+**核心改进**：content-desc 支持（先 text 后 content-desc 渐进式识别）
