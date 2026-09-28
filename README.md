@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)]()
 [![Skill](https://img.shields.io/badge/Skill-GUI%20Agent-blue.svg)]()
-[![Version](https://img.shields.io/badge/Version-v9.4-orange.svg)]()
+[![Version](https://img.shields.io/badge/Version-v9.7-orange.svg)]()
 
 ---
 
@@ -16,7 +16,7 @@
 - [训练优化历程](#-训练优化历程)
 - [优化效果对比](#-优化效果对比)
 - [关键技术方案](#-关键技术方案)
-- [新任务上手速查](#-新任务上手速查)
+- [文档导航](#-文档导航)
 - [未来优化方向](#-未来优化方向)
 
 ---
@@ -86,7 +86,8 @@
 | **能模板匹配绝不用大模型** | 无控件场景用图像比对，毫秒级识别 |
 | **事件驱动替代固定等待** | 页面加载完成立即执行，不空等 |
 | **脚本与文档分离** | 预写执行脚本，大模型仅做决策回调 |
-| **简化优于复杂** | 消除系统弹窗后，直接移除对应检测逻辑 |
+| **白名单优于黑名单** | 固定文案前缀匹配，不漏新情况 |
+| **极简阶梯** | 能在低阶梯解决就绝不往高走 |
 
 ---
 
@@ -125,6 +126,12 @@
 - 预写完整脚本，一条命令跑全程到回调点
 - 大模型仅做决策回调，Token消耗再降90%
 
+### 第九阶段：实战打磨（v9.5-v9.7）
+- GUI任务极简阶梯，避免过度设计
+- 白名单识别替代黑名单，减少第三方误点
+- 完成态浮层判定，解决弹窗抓不到的问题
+- Shell踩坑修复（echo重定向、正则中文超限等）
+
 ---
 
 ## 📊 优化效果对比
@@ -133,7 +140,7 @@
 |------|-------------|---------------|--------------|--------|
 | 单步识别耗时 | 5-8s | 10ms-7s | **10ms-7s** | **5~400倍** |
 | 大模型决策轮数 | 每步1轮 | 每步1轮 | **仅回调1轮** | **-90%** |
-| 10轮任务总耗时 | ~108s | ~16s | **~16-45s** | **-85%** |
+| 任务总耗时 | ~108s | ~16s | **~16-62s** | **-40~85%** |
 | 截屏调用占比 | 100% | <2% | **<2%** | **下降98%** |
 | Token消耗 | 高 | 极低 | **极低** | **下降95%** |
 | 识别准确率 | 70% | 97% | **97%+** | **提升27%+** |
@@ -147,74 +154,24 @@
 
 ---
 
-## 🔧 关键技术方案
+## 🔧 核心亮点
 
-### 1. 五级降级识别引擎
-```bash
-smart_recognize() {
-    # 1. 局部指纹（~10ms）
-    coord=$(fingerprint_v2.sh get "$page" "$text")
-    [ -n "$coord" ] && echo "$coord" && return
-
-    # 2. 局部 dump（~2s）
-    uiautomator dump --bounds "[0,0][1200,800]" /sdcard/ui_partial.xml
-    bounds=$(grep "text=\"$text\"" /sdcard/ui_partial.xml)
-
-    # 2b. content-desc 兜底
-    if [ -z "$bounds" ]; then
-        bounds=$(grep "content-desc=\"$text\"" /sdcard/ui_partial.xml)
-    fi
-    [ -n "$bounds" ] && extract_center && return
-
-    # 3. 全局 dump 兜底（~7s）
-    uiautomator dump /sdcard/ui_full.xml
-    bounds=$(grep "text=\"$text\"" /sdcard/ui_full.xml)
-    [ -n "$bounds" ] && extract_center && return
-
-    # 4. 模板匹配（~100-300ms）
-    coord=$(find_template "$template_name")
-    [ $? -eq 0 ] && echo "$coord" && return
-
-    # 5. VLM兜底（~3-5s）
-    echo "FALLBACK_VLM"
-}
-```
-
-### 2. 独立脚本架构（核心跃迁）
-```
-预写脚本：单命令跑全程到回调点
-SKILL.md：精简为执行架构 + 决策表 + 铁律
-大模型：仅在完成/异常时回调决策
-```
-
-### 3. 新任务脚本模板
-```bash
-#!/system/bin/sh
-# CONFIG区集中可调参数
-# init() → stage1() → stage2() → ... → return_to_agent()
-# 每步超时 + STOP_FLAG检查 + 时间戳耗时统计
-```
+1. **五级降级识别**：指纹→局部dump→全局dump→模板匹配→VLM
+2. **独立脚本架构**：预写脚本单命令执行，大模型仅回调决策
+3. **事件驱动等待**：替代固定sleep，页面加载完立即继续
+4. **白名单识别**：固定文案前缀匹配，不漏新情况
+5. **完成态精准判定**：不用「无按钮=完成」，匹配明确文本
+6. **极简阶梯**：写代码前先判断是否真需要复杂逻辑
 
 ---
 
-## 🚀 新任务上手速查
+## 📚 文档导航
 
-### 通用目录结构
-```
-skills/<your-skill>/
-├── SKILL.md              # 执行架构 + 决策表 + 铁律
-└── <your>_task.sh        # 完整执行脚本
-```
-
-### 常见踩坑与解决
-| 问题 | 解决 |
-|---|---|
-| awk单行压缩失效 | 保持多行格式 |
-| 批量rm失败 | 显式列出文件名 |
-| Web页面等待慢 | sleep 3 + 单次dump |
-| content-desc找不到 | text→content-desc渐进式 |
-| 多候选控件点错 | 选bounds高度最小 |
-| 完成态误判 | 精准匹配完成态文本 |
+| 文档 | 内容 | 适合谁读 |
+|------|------|----------|
+| **README.md**（本文档） | 整体概览、优化历程、核心指标 | 快速了解项目全貌 |
+| **GUI_AGENT_SKILL_TRAINING_GUIDE.md** | 完整训练历程、所有优化节点、踩坑记录 | 想深入了解每一步迭代逻辑 |
+| **APP_TASK_AUTOMATION_GUIDE.md** | 可直接复用的脚本模板、函数列表、标准循环 | 要写新任务脚本，直接复制改造 |
 
 ---
 
