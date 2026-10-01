@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Platform](https://img.shields.io/badge/Platform-Android-green.svg)]()
 [![Skill](https://img.shields.io/badge/Skill-GUI%20Agent-blue.svg)]()
-[![Version](https://img.shields.io/badge/Version-v9.7-orange.svg)]()
+[![Version](https://img.shields.io/badge/Version-v9.8-orange.svg)]()
 
 ---
 
